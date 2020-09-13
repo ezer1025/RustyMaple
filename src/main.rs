@@ -9,10 +9,10 @@ use std::fs::File;
 use log::*;
 use simplelog::*;
 
+mod defaults;
 mod net;
 
 fn main() {
-    // Setting up logger settings for both console and file
     CombinedLogger::init(vec![
         TermLogger::new(LevelFilter::Trace, Config::default(), TerminalMode::Mixed),
         WriteLogger::new(
@@ -23,10 +23,7 @@ fn main() {
     ])
     .unwrap();
 
-    // Loading .env file into environment variables
     dotenv().ok();
-
-    // loading address, port and server_type environment variables values
 
     let server_address: String = match env::var("address") {
         Ok(value) => value,
@@ -70,15 +67,73 @@ fn main() {
         }
     };
 
+    let clients_threads: usize = match env::var("clients_threads") {
+        Ok(value) => match value.parse::<usize>() {
+            Ok(usize_value) => usize_value,
+            Err(error) => {
+                warn!(
+                    "could not use the given value for the key `clients_threads` [{}]",
+                    error
+                );
+                info!(
+                    "using the default value for `clients_threads` ({})",
+                    defaults::DEFAULT_CLIENTS_THREADS
+                );
+                defaults::DEFAULT_CLIENTS_THREADS
+            }
+        },
+        Err(error) => {
+            warn!(
+                "could not find the key `clients_threads` in the environment variables/file [{}]",
+                error
+            );
+            info!(
+                "using default value for `clients_threads` ({})",
+                defaults::DEFAULT_CLIENTS_THREADS
+            );
+            defaults::DEFAULT_CLIENTS_THREADS
+        }
+    };
+
+    let client_workers: usize = match env::var("client_workers") {
+        Ok(value) => match value.parse::<usize>() {
+            Ok(usize_value) => usize_value,
+            Err(error) => {
+                warn!(
+                    "could not use the given value for the key `client_workers` [{}]",
+                    error
+                );
+                info!(
+                    "using the default value for `client_workers` ({})",
+                    defaults::DEFAULT_CLIENT_WORKERS
+                );
+                defaults::DEFAULT_CLIENT_WORKERS
+            }
+        },
+        Err(error) => {
+            warn!(
+                "could not found the key `client_workers` in the environment variables/file [{}]",
+                error
+            );
+            info!(
+                "using the default value for `client_workers` ({})",
+                defaults::DEFAULT_CLIENT_WORKERS,
+            );
+            defaults::DEFAULT_CLIENT_WORKERS
+        }
+    };
+
     let server = net::server::ServerBuilder::new()
         .server_type(&server_type)
+        .clients_threads(clients_threads)
+        .client_workers(client_workers)
         .spawn();
 
     let server = match server {
         Ok(server) => server,
         Err(error) => {
             error!(
-                "Could not create server with the current configurations [{}]",
+                "could not create server with the current configurations [{}]",
                 error
             );
             std::process::exit(1);
@@ -86,13 +141,13 @@ fn main() {
     };
 
     let address_and_port = format!("{}:{}", server_address, server_port);
-    info!("Start listening on {}", address_and_port);
+    info!("start listening on {}", address_and_port);
 
     match server.listen(address_and_port.parse().unwrap(), |new_client_address| {
-        info!("New connection [{}]", new_client_address);
+        info!("new connection [{}]", new_client_address);
     }) {
         Err(error) => {
-            error!("Server could not start listening [{}]", error);
+            error!("server could not start listening [{}]", error);
             std::process::exit(1);
         }
         _ => (),
