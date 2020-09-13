@@ -16,7 +16,7 @@ pub struct Client {
 
 impl Client {
     pub fn start(&mut self, mut stream: TcpStream) {
-        let (sender, receiver) = channel::<[u8; defaults::DEFAULT_BUFFER_SIZE]>();
+        let (sender, receiver) = channel::<Vec<u8>>();
         let receive_thread_pool = threadpool::ThreadPool::new(self.workers_count);
         let write_stream = match stream.try_clone() {
             Ok(cloned_stream) => cloned_stream,
@@ -24,7 +24,7 @@ impl Client {
         };
         let _ = thread::spawn(|| Self::send_messages(receiver, write_stream));
         loop {
-            let mut read_buffer = [0 as u8; defaults::DEFAULT_BUFFER_SIZE];
+            let mut read_buffer: Vec<u8> = vec![0; defaults::DEFAULT_BUFFER_SIZE];
             match stream.read(&mut read_buffer) {
                 Ok(bytes_read) => {
                     if bytes_read == 0 {
@@ -42,22 +42,19 @@ impl Client {
     }
 
     pub fn handle_receive(
-        buffer: [u8; defaults::DEFAULT_BUFFER_SIZE],
-        _buffer_size: usize,
-        sender_channel: Sender<[u8; defaults::DEFAULT_BUFFER_SIZE]>,
+        buffer: Vec<u8>,
+        buffer_size: usize,
+        sender_channel: Sender<Vec<u8>>,
         packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
     ) {
-        let return_buffer = packet_handler.handle(buffer);
-        match sender_channel.send(return_buffer) {
+        let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
+        match sender_channel.send(send_buffer) {
             Err(error) => debug!("mpsc channel hung up [{}]", error),
             Ok(()) => (),
         };
     }
 
-    pub fn send_messages(
-        receive_channel: Receiver<[u8; defaults::DEFAULT_BUFFER_SIZE]>,
-        mut stream: TcpStream,
-    ) {
+    pub fn send_messages(receive_channel: Receiver<Vec<u8>>, mut stream: TcpStream) {
         loop {
             match receive_channel.recv() {
                 Ok(received_data) => match stream.write(&received_data[..]) {
