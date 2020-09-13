@@ -1,11 +1,17 @@
+use crate::defaults;
+use crate::net::client;
 use crate::net::handler;
 
 use std::error;
 use std::net::SocketAddr;
 use std::net::TcpListener;
+use std::sync::Arc;
+use threadpool::ThreadPool;
 
 pub struct Server {
-    packet_handler: Box<dyn handler::GenericHandler>,
+    packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
+    connection_threads: usize,
+    client_workers: usize,
 }
 
 impl Server {
@@ -15,16 +21,33 @@ impl Server {
         on_new_connection: fn(SocketAddr),
     ) -> Result<(), Box<dyn error::Error>> {
         let listener = TcpListener::bind(address)?;
+        let thread_pool = ThreadPool::new(self.connection_threads);
+
         for connection in listener.incoming() {
-            match connection {
-                Ok(connection) => match connection.local_addr() {
-                    Ok(local_addr) => on_new_connection(local_addr),
-                    Err(error) => return Err(error.into()),
-                },
+            let stream = match connection {
+                Ok(unwrapped_stream) => {
+                    match unwrapped_stream.peer_addr() {
+                        Ok(peer_addr) => on_new_connection(peer_addr),
+                        Err(error) => return Err(error.into()),
+                    };
+                    unwrapped_stream
+                }
                 Err(error) => {
                     return Err(error.into());
                 }
-            }
+            };
+
+            let mut client = match client::ClientBuilder::new()
+                .packet_handler(&self.packet_handler)
+                .workers_count(&self.client_workers)
+                .spawn()
+            {
+                Ok(client) => client,
+                Err(error) => return Err(error.into()),
+            };
+            thread_pool.execute(move || {
+                client.start(stream);
+            });
         }
         Ok(())
     }
@@ -32,12 +55,16 @@ impl Server {
 
 pub struct ServerBuilder<'a> {
     server_packet_handler: Option<&'a str>,
+    client_main_thread_count: usize,
+    client_workers_count: usize,
 }
 
 impl<'a> ServerBuilder<'a> {
     pub fn new() -> ServerBuilder<'a> {
         ServerBuilder {
             server_packet_handler: None,
+            client_main_thread_count: defaults::DEFAULT_CLIENT_WORKERS,
+            client_workers_count: defaults::DEFAULT_CLIENT_WORKERS,
         }
     }
 
@@ -46,19 +73,31 @@ impl<'a> ServerBuilder<'a> {
         self
     }
 
-    pub fn spawn(&self) -> Result<Server, Box<dyn error::Error>> {
-        let packet_handler: Box<dyn handler::GenericHandler> = match self.server_packet_handler {
-            Some("login") => Box::new(handler::LoginHandler {}),
-            Some("channel") => Box::new(handler::ChannelHandler {}),
-            Some("world") => Box::new(handler::WorldHandler {}),
-            Some(server_type) => {
-                return Err(format!("Unknown server type `{}`", server_type).into())
-            }
-            None => return Err("Server type not supplied".into()),
-        };
+    pub fn clients_threads(&mut self, thread_count: usize) -> &mut Self {
+        self.client_main_thread_count = thread_count;
+        self
+    }
 
+    pub fn client_workers(&mut self, workers_count: usize) -> &mut Self {
+        self.client_workers_count = workers_count;
+        self
+    }
+
+    pub fn spawn(&self) -> Result<Server, Box<dyn error::Error>> {
+        let matched_packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static> =
+            match self.server_packet_handler {
+                Some("login") => Arc::new(handler::LoginHandler {}),
+                Some("channel") => Arc::new(handler::ChannelHandler {}),
+                Some("world") => Arc::new(handler::WorldHandler {}),
+                Some(other_type) => {
+                    return Err(format!("unknown server type `{}`", other_type).into())
+                }
+                None => return Err("cannot spawn Server without specifying server type".into()),
+            };
         Ok(Server {
-            packet_handler: packet_handler,
+            packet_handler: matched_packet_handler,
+            connection_threads: self.client_main_thread_count,
+            client_workers: self.client_workers_count,
         })
     }
 }
