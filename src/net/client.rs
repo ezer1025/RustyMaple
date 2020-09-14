@@ -1,44 +1,115 @@
 use crate::defaults;
 use crate::net::handler;
 
+use bytes::{BufMut, BytesMut};
 use log::*;
 use std::error;
 use std::io::{Read, Write};
+use std::mem::size_of;
 use std::net::TcpStream;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 
+pub struct SecurityContext {
+    send_iv: [u8; defaults::INITIALIZE_VECTORS_SIZE],
+    recv_iv: [u8; defaults::INITIALIZE_VECTORS_SIZE],
+}
+
 pub struct Client {
     workers_count: usize,
     packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
+    security_context: SecurityContext,
 }
 
 impl Client {
     pub fn start(&mut self, mut stream: TcpStream) {
         let (sender, receiver) = channel::<Vec<u8>>();
         let receive_thread_pool = threadpool::ThreadPool::new(self.workers_count);
+
         let write_stream = match stream.try_clone() {
             Ok(cloned_stream) => cloned_stream,
             Err(error) => panic!("could not copy TcpStream [{}]", error),
         };
-        let _ = thread::spawn(|| Self::send_messages(receiver, write_stream));
+
+        thread::spawn(|| Self::send_messages(receiver, write_stream));
+
+        let mut data_to_read = 0;
+        let mut total_data_read = 0;
+        let mut data_buffer: Vec<u8> = vec![0; defaults::DEFAULT_HEADER_LENGTH];
+
+        let (handshake_packet, _handshake_length) = Self::create_handshake(&self.security_context);
+        match sender.send(handshake_packet) {
+            Err(error) => {
+                debug!("mpsc channel hung up [{}]", error);
+                return;
+            }
+            Ok(()) => (),
+        };
+
         loop {
-            let mut read_buffer: Vec<u8> = vec![0; defaults::DEFAULT_BUFFER_SIZE];
-            match stream.read(&mut read_buffer) {
-                Ok(bytes_read) => {
-                    if bytes_read == 0 {
+            if data_to_read == 0 {
+                match stream.read_exact(&mut data_buffer) {
+                    Ok(()) => {
+                        if data_buffer.len() != defaults::DEFAULT_HEADER_LENGTH {
+                            debug!("failed to read packet header from TcpStream");
+                        } else {
+                            data_to_read = 8;
+                            total_data_read = 0;
+                            data_buffer = vec![0; data_to_read];
+                        }
+                    }
+                    Err(error) => {
+                        warn!("could not read from TcpStream [{}]", error);
                         break;
                     }
-                    let sender_clone = sender.clone();
-                    let packet_handler = self.packet_handler.clone();
-                    receive_thread_pool.execute(move || {
-                        Self::handle_receive(read_buffer, bytes_read, sender_clone, packet_handler)
-                    });
+                };
+            } else {
+                match stream.read(&mut data_buffer[total_data_read..]) {
+                    Ok(bytes_read) => {
+                        if bytes_read == 0 {
+                            break;
+                        }
+
+                        total_data_read += bytes_read;
+                        if total_data_read == data_to_read {
+                            let sender_clone = sender.clone();
+                            let packet_handler = self.packet_handler.clone();
+                            receive_thread_pool.execute(move || {
+                                Self::handle_receive(
+                                    data_buffer,
+                                    total_data_read,
+                                    sender_clone,
+                                    packet_handler,
+                                )
+                            });
+                            data_to_read = 0;
+                            data_buffer = vec![0; defaults::DEFAULT_HEADER_LENGTH];
+                        }
+                    }
+                    Err(error) => {
+                        warn!("could not read from TcpStream [{}]", error);
+                        break;
+                    }
                 }
-                Err(error) => warn!("could not read from TcpStream [{}]", error),
-            };
+            }
         }
+    }
+
+    pub fn create_handshake(security_context: &SecurityContext) -> (Vec<u8>, usize) {
+        let mut data = BytesMut::new();
+        data.put_u16_le(defaults::MAPLESTORY_VERSION);
+        data.put_u16_le(defaults::MAPLESTORY_SUBVERSION.len() as u16);
+        data.put_slice(defaults::MAPLESTORY_SUBVERSION.as_bytes());
+        data.put_slice(&security_context.recv_iv);
+        data.put_slice(&security_context.send_iv);
+        data.put_u8(defaults::MAPLESTORY_LOCALE);
+
+        let mut result = BytesMut::with_capacity(data.len() + size_of::<u16>());
+        result.put_u16_le(data.len() as u16);
+        result.put_slice(&data);
+
+        (result.to_vec(), result.len())
     }
 
     pub fn handle_receive(
@@ -108,6 +179,10 @@ impl<'a> ClientBuilder<'a> {
         Ok(Client {
             workers_count: self.workers_count,
             packet_handler: client_packet_handler,
+            security_context: SecurityContext {
+                send_iv: [0; defaults::INITIALIZE_VECTORS_SIZE],
+                recv_iv: [0; defaults::INITIALIZE_VECTORS_SIZE],
+            },
         })
     }
 }
