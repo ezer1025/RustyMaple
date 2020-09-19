@@ -37,7 +37,7 @@ pub fn get_packet_length(header: &Vec<u8>) -> usize {
     (length >> 16) ^ (length & 0xFFFF) & 0xFFFF
 }
 
-fn maple_custom_encrypt_internal(buffer: Vec<u8>) -> Vec<u8> {
+fn maple_custom_encrypt_internal(buffer: &Vec<u8>) -> Vec<u8> {
     let mut rememberer: u8;
     let mut current_byte: u8;
     let mut length: u8;
@@ -77,7 +77,7 @@ fn maple_custom_encrypt_internal(buffer: Vec<u8>) -> Vec<u8> {
     result
 }
 
-fn maple_custom_decrypt_internals(buffer: Vec<u8>) -> Vec<u8> {
+fn maple_custom_decrypt_internals(buffer: &Vec<u8>) -> Vec<u8> {
     let mut length: u8;
     let mut rememberer: u8;
     let mut current_byte: u8;
@@ -223,7 +223,7 @@ fn aes_decrypt(buffer: &[u8]) -> Result<Vec<u8>, Box<dyn error::Error>> {
 }
 
 pub fn maple_custom_encrypt(
-    buffer: Vec<u8>,
+    buffer: &Vec<u8>,
     user_sequence: &mut [u8; defaults::USER_SEQUENCE_SIZE],
 ) -> Result<Vec<u8>, Box<dyn error::Error>> {
     match maple_custom_aes_crypt(maple_custom_encrypt_internal(buffer), user_sequence, true) {
@@ -236,7 +236,7 @@ pub fn maple_custom_encrypt(
 }
 
 pub fn maple_custom_decrypt(
-    buffer: Vec<u8>,
+    buffer: &Vec<u8>,
     user_sequence: &mut [u8; defaults::USER_SEQUENCE_SIZE],
 ) -> Result<Vec<u8>, Box<dyn error::Error>> {
     match maple_custom_aes_crypt(maple_custom_decrypt_internals(buffer), user_sequence, false) {
