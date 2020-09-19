@@ -87,11 +87,23 @@ impl Client {
 
                         total_data_read += bytes_read;
                         if total_data_read == data_to_read {
+                            let decrypted_buffer = match crypto::maple_custom_decrypt(
+                                &data_buffer,
+                                &mut receive_sequence,
+                            ) {
+                                Ok(decrypted_buffer) => decrypted_buffer,
+                                Err(error) => {
+                                    warn!("unable to decrypt packet [{}]", error);
+                                    continue;
+                                }
+                            };
+
                             let sender_clone = sender.clone();
                             let packet_handler = self.packet_handler.clone();
+
                             receive_thread_pool.execute(move || {
                                 Self::handle_receive(
-                                    data_buffer,
+                                    decrypted_buffer,
                                     total_data_read,
                                     sender_clone,
                                     packet_handler,
@@ -154,7 +166,7 @@ impl Client {
                     let mut final_buffer = sendable_message.buffer;
                     if sendable_message.encrypted {
                         final_buffer = match crypto::maple_custom_encrypt(
-                            final_buffer,
+                            &final_buffer,
                             &mut user_send_sequence,
                         ) {
                             Ok(encrypted_buffer) => encrypted_buffer,
