@@ -1,4 +1,5 @@
 use crate::defaults;
+use crate::net::crypto;
 use crate::net::handler;
 
 use bytes::{BufMut, BytesMut};
@@ -54,9 +55,10 @@ impl Client {
                         if data_buffer.len() != defaults::DEFAULT_HEADER_LENGTH {
                             debug!("failed to read packet header from TcpStream");
                         } else {
-                            data_to_read = 8;
+                            data_to_read = crypto::get_packet_length(&data_buffer);
                             total_data_read = 0;
                             data_buffer = vec![0; data_to_read];
+                            info!("about to read {} bytes", data_to_read);
                         }
                     }
                     Err(error) => {
@@ -118,11 +120,11 @@ impl Client {
         sender_channel: Sender<Vec<u8>>,
         packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
     ) {
-        let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
-        match sender_channel.send(send_buffer) {
-            Err(error) => debug!("mpsc channel hung up [{}]", error),
-            Ok(()) => (),
-        };
+        // let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
+        // match sender_channel.send(send_buffer) {
+        //     Err(error) => debug!("mpsc channel hung up [{}]", error),
+        //     Ok(()) => (),
+        // };
     }
 
     pub fn send_messages(receive_channel: Receiver<Vec<u8>>, mut stream: TcpStream) {
