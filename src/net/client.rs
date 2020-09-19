@@ -94,6 +94,8 @@ impl Client {
                                 Ok(decrypted_buffer) => decrypted_buffer,
                                 Err(error) => {
                                     warn!("unable to decrypt packet [{}]", error);
+                                    data_to_read = 0;
+                                    data_buffer = vec![0; defaults::DEFAULT_HEADER_LENGTH];
                                     continue;
                                 }
                             };
