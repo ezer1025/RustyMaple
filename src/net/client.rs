@@ -4,6 +4,7 @@ use crate::net::handler;
 
 use bytes::{BufMut, BytesMut};
 use log::*;
+use rand::prelude::*;
 use std::error;
 use std::io::{Read, Write};
 use std::mem::size_of;
@@ -12,20 +13,20 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 
-pub struct SecurityContext {
-    send_iv: [u8; defaults::INITIALIZE_VECTORS_SIZE],
-    recv_iv: [u8; defaults::INITIALIZE_VECTORS_SIZE],
-}
-
 pub struct Client {
     workers_count: usize,
     packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
-    security_context: SecurityContext,
+}
+
+pub struct SendableMessage {
+    buffer: Vec<u8>,
+    encrypted: bool,
 }
 
 impl Client {
     pub fn start(&mut self, mut stream: TcpStream) {
-        let (sender, receiver) = channel::<Vec<u8>>();
+        let mut prng: StdRng = StdRng::from_entropy();
+        let (sender, receiver) = channel::<SendableMessage>();
         let receive_thread_pool = threadpool::ThreadPool::new(self.workers_count);
 
         let write_stream = match stream.try_clone() {
@@ -33,14 +34,25 @@ impl Client {
             Err(error) => panic!("could not copy TcpStream [{}]", error),
         };
 
-        thread::spawn(|| Self::send_messages(receiver, write_stream));
+        let mut send_sequence: [u8; defaults::USER_SEQUENCE_SIZE] = Default::default();
+        let mut receive_sequence: [u8; defaults::USER_SEQUENCE_SIZE] = Default::default();
+
+        prng.fill(&mut send_sequence);
+        prng.fill(&mut receive_sequence);
 
         let mut data_to_read = 0;
         let mut total_data_read = 0;
         let mut data_buffer: Vec<u8> = vec![0; defaults::DEFAULT_HEADER_LENGTH];
 
-        let (handshake_packet, _handshake_length) = Self::create_handshake(&self.security_context);
-        match sender.send(handshake_packet) {
+        let (handshake_packet, _handshake_length) =
+            Self::create_handshake(&receive_sequence, &send_sequence);
+
+        thread::spawn(move || Self::send_messages(receiver, write_stream, &mut send_sequence));
+
+        match sender.send(SendableMessage {
+            buffer: handshake_packet,
+            encrypted: false,
+        }) {
             Err(error) => {
                 debug!("mpsc channel hung up [{}]", error);
                 return;
@@ -98,13 +110,16 @@ impl Client {
         }
     }
 
-    pub fn create_handshake(security_context: &SecurityContext) -> (Vec<u8>, usize) {
+    pub fn create_handshake(
+        receive_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
+        send_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
+    ) -> (Vec<u8>, usize) {
         let mut data = BytesMut::new();
         data.put_u16_le(defaults::MAPLESTORY_VERSION);
         data.put_u16_le(defaults::MAPLESTORY_SUBVERSION.len() as u16);
         data.put_slice(defaults::MAPLESTORY_SUBVERSION.as_bytes());
-        data.put_slice(&security_context.recv_iv);
-        data.put_slice(&security_context.send_iv);
+        data.put_slice(receive_sequence);
+        data.put_slice(send_sequence);
         data.put_u8(defaults::MAPLESTORY_LOCALE);
 
         let mut result = BytesMut::with_capacity(data.len() + size_of::<u16>());
@@ -117,7 +132,7 @@ impl Client {
     pub fn handle_receive(
         buffer: Vec<u8>,
         buffer_size: usize,
-        sender_channel: Sender<Vec<u8>>,
+        sender_channel: Sender<SendableMessage>,
         packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
     ) {
         // let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
@@ -127,17 +142,39 @@ impl Client {
         // };
     }
 
-    pub fn send_messages(receive_channel: Receiver<Vec<u8>>, mut stream: TcpStream) {
+    pub fn send_messages(
+        receive_channel: Receiver<SendableMessage>,
+        mut stream: TcpStream,
+        send_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
+    ) {
+        let mut user_send_sequence = send_sequence.clone();
         loop {
             match receive_channel.recv() {
-                Ok(received_data) => match stream.write(&received_data[..]) {
-                    Ok(bytes_written) => debug!(
-                        "written {} bytes to {}",
-                        bytes_written,
-                        stream.peer_addr().unwrap()
-                    ),
-                    Err(error) => warn!("could not write to TcpStream [{}]", error),
-                },
+                Ok(sendable_message) => {
+                    let mut final_buffer = sendable_message.buffer;
+                    if sendable_message.encrypted {
+                        final_buffer = match crypto::maple_custom_encrypt(
+                            final_buffer,
+                            &mut user_send_sequence,
+                        ) {
+                            Ok(encrypted_buffer) => encrypted_buffer,
+                            Err(error) => {
+                                warn!("unable to encrypt message [{}]", error);
+                                break;
+                            }
+                        };
+                    }
+
+                    match stream.write(&final_buffer[..]) {
+                        Ok(bytes_written) => debug!(
+                            "written {} bytes to {}",
+                            bytes_written,
+                            stream.peer_addr().unwrap()
+                        ),
+
+                        Err(error) => warn!("could not write to TcpStream [{}]", error),
+                    }
+                }
                 Err(error) => {
                     debug!("mpsc channel hung up [{}]", error);
                     break;
@@ -181,10 +218,6 @@ impl<'a> ClientBuilder<'a> {
         Ok(Client {
             workers_count: self.workers_count,
             packet_handler: client_packet_handler,
-            security_context: SecurityContext {
-                send_iv: [0; defaults::INITIALIZE_VECTORS_SIZE],
-                recv_iv: [0; defaults::INITIALIZE_VECTORS_SIZE],
-            },
         })
     }
 }
