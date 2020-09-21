@@ -43,25 +43,25 @@ fn maple_custom_encrypt_internal(buffer: &Vec<u8>) -> Vec<u8> {
             for indexer in 0..result.len() {
                 current_byte = result[indexer as usize];
                 current_byte = current_byte.rotate_left(3);
-                current_byte += length;
+                current_byte = current_byte.wrapping_add(length); // current_byte += length;
                 current_byte ^= rememberer;
                 rememberer = current_byte;
                 current_byte = current_byte.rotate_right((length as u32) & 0xFF);
                 current_byte = !current_byte & 0xFF;
-                current_byte += 0x48;
-                length -= 1;
+                current_byte = current_byte.wrapping_add(0x48); // current_byte += 0x48;
+                length = length.wrapping_sub(1); // length -= 1;
                 result[indexer as usize] = current_byte;
             }
         } else {
             for indexer in (result.len() - 1..=0).rev() {
                 current_byte = result[indexer as usize];
                 current_byte = current_byte.rotate_left(4);
-                current_byte += length;
+                current_byte = current_byte.wrapping_add(length); // current_byte += length;
                 current_byte ^= rememberer;
                 rememberer = current_byte;
                 current_byte ^= 0x13;
                 current_byte = current_byte.rotate_right(3);
-                length -= 1;
+                length = length.wrapping_sub(1); // length -= 1;
                 result[indexer as usize] = current_byte;
             }
         }
@@ -81,16 +81,16 @@ fn maple_custom_decrypt_internals(buffer: &Vec<u8>) -> Vec<u8> {
         if loop_index % 2 == 0 {
             for indexer in 0..length {
                 current_byte = result[indexer as usize];
-                current_byte -= 0x48;
+                current_byte = current_byte.wrapping_sub(0x48); // current_byte -= 0x48;
                 current_byte = !current_byte & 0xFF;
                 current_byte = current_byte.rotate_left((length as u32) & 0xFF);
                 next_rememberer = current_byte;
                 current_byte ^= rememberer;
                 rememberer = next_rememberer;
-                current_byte -= length;
+                current_byte = current_byte.wrapping_sub(length); // current_byte -= length;
                 current_byte = current_byte.rotate_right(3);
                 result[indexer as usize] = current_byte;
-                length -= 1;
+                length = length.wrapping_sub(1); // length -= 1;
             }
         } else {
             for indexer in (result.len() - 1..=0).rev() {
@@ -100,10 +100,10 @@ fn maple_custom_decrypt_internals(buffer: &Vec<u8>) -> Vec<u8> {
                 next_rememberer = current_byte;
                 current_byte ^= rememberer;
                 rememberer = next_rememberer;
-                current_byte -= length;
+                current_byte = current_byte.wrapping_sub(length); // current_byte -= length;
                 current_byte = current_byte.rotate_right(4);
                 result[indexer as usize] = current_byte;
-                length -= 1;
+                length = length.wrapping_sub(1); // length -= 1;
             }
         }
     }
@@ -119,10 +119,14 @@ fn morph_sequence(
     for indexer in 0..defaults::USER_SEQUENCE_SIZE {
         current_byte = current_sequence[indexer];
         current_table_byte = SEQUENCE_SHIFTING_KEY[current_byte as usize];
-        new_sequence[0] += SEQUENCE_SHIFTING_KEY[new_sequence[1] as usize] - current_byte;
-        new_sequence[1] -= new_sequence[2] ^ current_table_byte;
-        new_sequence[2] ^= SEQUENCE_SHIFTING_KEY[new_sequence[3] as usize] + current_byte;
-        new_sequence[3] -= new_sequence[0] - current_table_byte;
+        new_sequence[0] = new_sequence[0].wrapping_add(
+            SEQUENCE_SHIFTING_KEY[new_sequence[1] as usize].wrapping_sub(current_byte),
+        ); // new_sequence[0] += SEQUENCE_SHIFTING_KEY[new_sequence[1] as usize] - current_byte;
+        new_sequence[1] = new_sequence[1].wrapping_sub(new_sequence[2] ^ current_table_byte); // new_sequence[1] -= new_sequence[2] ^ current_table_byte;
+        new_sequence[2] ^=
+            SEQUENCE_SHIFTING_KEY[new_sequence[3] as usize].wrapping_add(current_byte); // new_sequence[2] ^= SEQUENCE_SHIFTING_KEY[new_sequence[3] as usize] + current_byte;
+        new_sequence[3] =
+            new_sequence[3].wrapping_sub(new_sequence[0].wrapping_sub(current_table_byte)); // new_sequence[3] -= new_sequence[0] - current_table_byte;
         let mut val: usize = (new_sequence[0] as usize
             | (((new_sequence[1] & 0xFF) as usize) << 8)
             | (((new_sequence[2] & 0xFF) as usize) << 16)
@@ -152,9 +156,9 @@ fn maple_custom_aes_crypt(
     let mut xor_key: Vec<u8> = Vec::with_capacity(defaults::AES_BLOCK_SIZE);
     let mut result = buffer.clone();
 
-    for block_indexer in (0..defaults::AES_BLOCK_SIZE).step_by(defaults::USER_SEQUENCE_SIZE) {
+    for _ in (0..defaults::AES_BLOCK_SIZE).step_by(defaults::USER_SEQUENCE_SIZE) {
         for sequence_indexer in 0..defaults::USER_SEQUENCE_SIZE {
-            xor_key[block_indexer + sequence_indexer] = user_sequence[sequence_indexer];
+            xor_key.push(user_sequence[sequence_indexer]);
         }
     }
 
