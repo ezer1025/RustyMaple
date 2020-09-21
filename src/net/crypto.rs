@@ -1,7 +1,9 @@
 use crate::defaults;
+
 use aes::Aes256;
 use block_modes::block_padding::NoPadding;
 use block_modes::{BlockMode, Ecb};
+use bytes::{BufMut, BytesMut};
 use std::cmp::min;
 use std::error;
 
@@ -29,24 +31,14 @@ const AES_KEY: [u8; defaults::AES_KEY_SIZE] = [
     0x1B, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x33, 0x00, 0x00, 0x00, 0x52, 0x00, 0x00, 0x00,
 ];
 
-pub fn get_packet_length(header: &Vec<u8>) -> usize {
-    let length = (header[0] as usize)
-        | (header[1] as usize) << 8
-        | (header[2] as usize) << 16
-        | (header[3] as usize) << 24;
-    (length >> 16) ^ (length & 0xFFFF) & 0xFFFF
-}
-
 fn maple_custom_encrypt_internal(buffer: &Vec<u8>) -> Vec<u8> {
     let mut rememberer: u8;
     let mut current_byte: u8;
     let mut length: u8;
     let mut result = buffer.clone();
-
     for loop_index in 0..6 {
         rememberer = 0;
         length = result.len() as u8 & 0xFF;
-
         if loop_index % 2 == 0 {
             for indexer in 0..result.len() {
                 current_byte = result[indexer as usize];
@@ -83,7 +75,6 @@ fn maple_custom_decrypt_internals(buffer: &Vec<u8>) -> Vec<u8> {
     let mut current_byte: u8;
     let mut next_rememberer: u8;
     let mut result = buffer.clone();
-
     for loop_index in 1..=6 {
         rememberer = 0;
         length = result.len() as u8 & 0xFF;
@@ -125,16 +116,13 @@ fn morph_sequence(
     let mut current_byte: u8;
     let mut current_table_byte: u8;
     let mut new_sequence: [u8; defaults::USER_SEQUENCE_SIZE] = [0xF2, 0x53, 0x50, 0xC6];
-
     for indexer in 0..defaults::USER_SEQUENCE_SIZE {
         current_byte = current_sequence[indexer];
         current_table_byte = SEQUENCE_SHIFTING_KEY[current_byte as usize];
-
         new_sequence[0] += SEQUENCE_SHIFTING_KEY[new_sequence[1] as usize] - current_byte;
         new_sequence[1] -= new_sequence[2] ^ current_table_byte;
         new_sequence[2] ^= SEQUENCE_SHIFTING_KEY[new_sequence[3] as usize] + current_byte;
         new_sequence[3] -= new_sequence[0] - current_table_byte;
-
         let mut val: usize = (new_sequence[0] as usize
             | (((new_sequence[1] & 0xFF) as usize) << 8)
             | (((new_sequence[2] & 0xFF) as usize) << 16)
@@ -146,10 +134,10 @@ fn morph_sequence(
         val = (val << 0x03) >> 0;
         val2 |= val;
 
-        new_sequence[0] = (val2 as u8) & 0xFF;
-        new_sequence[1] = ((val2 >> 8) as u8) & 0xFF;
-        new_sequence[2] = ((val2 >> 16) as u8) & 0xFF;
-        new_sequence[3] = ((val2 >> 24) as u8) & 0xFF;
+        new_sequence[0] = val2 as u8;
+        new_sequence[1] = (val2 >> 8) as u8;
+        new_sequence[2] = (val2 >> 16) as u8;
+        new_sequence[3] = (val2 >> 24) as u8;
     }
     new_sequence
 }
@@ -215,7 +203,6 @@ fn aes_decrypt(buffer: &[u8]) -> Result<Vec<u8>, Box<dyn error::Error>> {
         Ok(cipher) => cipher,
         Err(error) => return Err(error.into()),
     };
-
     match cipher.decrypt_vec(buffer) {
         Ok(decrypted_text) => Ok(decrypted_text),
         Err(error) => Err(error.into()),
@@ -246,4 +233,30 @@ pub fn maple_custom_decrypt(
         }
         Err(error) => Err(error.into()),
     }
+}
+
+pub fn get_packet_length(header: &Vec<u8>) -> usize {
+    let length = (header[0] as usize)
+        | (header[1] as usize) << 8
+        | (header[2] as usize) << 16
+        | (header[3] as usize) << 24;
+    (length >> 16) ^ (length & 0xFFFF) & 0xFFFF
+}
+
+pub fn generate_packet_header(
+    length: u16,
+    user_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
+    version: &u16,
+) -> Vec<u8> {
+    // let mut result: [u8; defaults::DEFAULT_HEADER_LENGTH];
+    let mut result = BytesMut::with_capacity(defaults::DEFAULT_HEADER_LENGTH);
+
+    let first_word: u16 =
+        (user_sequence[2] as u16 | ((user_sequence[3] as u32) << 8) as u16) ^ version;
+    let second_word: u16 = first_word ^ length;
+
+    result.put_u16_le(first_word);
+    result.put_u16_le(second_word);
+
+    result.to_vec()
 }
