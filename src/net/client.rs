@@ -166,6 +166,21 @@ impl Client {
             match receive_channel.recv() {
                 Ok(sendable_message) => {
                     let mut final_buffer = sendable_message.buffer;
+
+                    let packet_header = crypto::generate_packet_header(
+                        final_buffer.len() as u16,
+                        &user_send_sequence,
+                        &defaults::MAPLESTORY_VERSION,
+                    );
+
+                    match stream.write(&packet_header[..]) {
+                        Ok(_) => debug!("written packet header to {}", stream.peer_addr().unwrap()),
+                        Err(error) => {
+                            warn!("could not write to TcpStream [{}]", error);
+                            continue;
+                        }
+                    }
+
                     if sendable_message.encrypted {
                         final_buffer = match crypto::maple_custom_encrypt(
                             &final_buffer,
