@@ -45,25 +45,25 @@ fn maple_custom_encrypt_internal(buffer: &Vec<u8>) -> Vec<u8> {
             for indexer in 0..result.len() {
                 current_byte = result[indexer as usize];
                 current_byte = current_byte.rotate_left(3);
-                current_byte = current_byte.wrapping_add(length); // current_byte += length;
+                current_byte = current_byte.wrapping_add(length);
                 current_byte ^= rememberer;
                 rememberer = current_byte;
                 current_byte = current_byte.rotate_right(length as u32);
                 current_byte = (!current_byte) & 0xFF;
-                current_byte = current_byte.wrapping_add(0x48); // current_byte += 0x48;
-                length = length.wrapping_sub(1); // length -= 1;
+                current_byte = current_byte.wrapping_add(0x48);
+                length = length.wrapping_sub(1);
                 result[indexer as usize] = current_byte;
             }
         } else {
             for indexer in (0..result.len()).rev() {
                 current_byte = result[indexer as usize];
                 current_byte = current_byte.rotate_left(4);
-                current_byte = current_byte.wrapping_add(length); // current_byte += length;
+                current_byte = current_byte.wrapping_add(length);
                 current_byte ^= rememberer;
                 rememberer = current_byte;
                 current_byte ^= 0x13;
                 current_byte = current_byte.rotate_right(3);
-                length = length.wrapping_sub(1); // length -= 1;
+                length = length.wrapping_sub(1);
                 result[indexer as usize] = current_byte;
             }
         }
@@ -86,16 +86,16 @@ fn maple_custom_decrypt_internals(buffer: Vec<u8>) -> Vec<u8> {
         if loop_index % 2 == 0 {
             for indexer in 0..result.len() {
                 current_byte = result[indexer as usize];
-                current_byte = current_byte.wrapping_sub(0x48); // current_byte -= 0x48;
+                current_byte = current_byte.wrapping_sub(0x48);
                 current_byte = (!current_byte) & 0xFF;
                 current_byte = current_byte.rotate_left(length as u32);
                 next_rememberer = current_byte;
                 current_byte ^= rememberer;
                 rememberer = next_rememberer;
-                current_byte = current_byte.wrapping_sub(length); // current_byte -= length;
+                current_byte = current_byte.wrapping_sub(length);
                 current_byte = current_byte.rotate_right(3);
                 result[indexer as usize] = current_byte;
-                length = length.wrapping_sub(1); // length -= 1;
+                length = length.wrapping_sub(1);
             }
         } else {
             for indexer in (0..result.len()).rev() {
@@ -105,10 +105,10 @@ fn maple_custom_decrypt_internals(buffer: Vec<u8>) -> Vec<u8> {
                 next_rememberer = current_byte;
                 current_byte ^= rememberer;
                 rememberer = next_rememberer;
-                current_byte = current_byte.wrapping_sub(length); // current_byte -= length;
+                current_byte = current_byte.wrapping_sub(length);
                 current_byte = current_byte.rotate_right(4);
                 result[indexer as usize] = current_byte;
-                length = length.wrapping_sub(1); // length -= 1;
+                length = length.wrapping_sub(1);
             }
         }
     }
@@ -164,10 +164,6 @@ fn maple_custom_aes_crypt(
     let mut block_size: usize;
     let mut result = buffer.clone();
     let mut user_sequence_block: Vec<u8> = Vec::with_capacity(defaults::AES_BLOCK_SIZE);
-    // let cipher: Ecb<Aes256, NoPadding> = match Ecb::new_var(&AES_KEY, Default::default()) {
-    //     Ok(cipher) => cipher,
-    //     Err(error) => return Err(error.into()),
-    // };
 
     for _ in (0..defaults::AES_BLOCK_SIZE).step_by(defaults::USER_SEQUENCE_SIZE) {
         for sequence_indexer in 0..defaults::USER_SEQUENCE_SIZE {
