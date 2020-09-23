@@ -55,7 +55,7 @@ fn maple_custom_encrypt_internal(buffer: &Vec<u8>) -> Vec<u8> {
                 result[indexer as usize] = current_byte;
             }
         } else {
-            for indexer in (result.len() - 1..=0).rev() {
+            for indexer in (0..result.len()).rev() {
                 current_byte = result[indexer as usize];
                 current_byte = current_byte.rotate_left(4);
                 current_byte = current_byte.wrapping_add(length); // current_byte += length;
@@ -84,8 +84,8 @@ fn maple_custom_decrypt_internals(buffer: Vec<u8>) -> Vec<u8> {
         length = result.len() as u8;
 
         if loop_index % 2 == 0 {
-            for indexer in 0..buffer.len() {
-                current_byte = buffer[indexer as usize];
+            for indexer in 0..result.len() {
+                current_byte = result[indexer as usize];
                 current_byte = current_byte.wrapping_sub(0x48); // current_byte -= 0x48;
                 current_byte = (!current_byte) & 0xFF;
                 current_byte = current_byte.rotate_left(length as u32);
@@ -98,7 +98,7 @@ fn maple_custom_decrypt_internals(buffer: Vec<u8>) -> Vec<u8> {
                 length = length.wrapping_sub(1); // length -= 1;
             }
         } else {
-            for indexer in (result.len() - 1..=0).rev() {
+            for indexer in (0..result.len()).rev() {
                 current_byte = result[indexer as usize];
                 current_byte = current_byte.rotate_left(3);
                 current_byte ^= 0x13;
@@ -159,12 +159,15 @@ fn morph_sequence(
 fn maple_custom_aes_crypt(
     buffer: Vec<u8>,
     user_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
-    encrypt: bool,
 ) -> Result<Vec<u8>, Box<dyn error::Error>> {
     let mut data_crypted = 0;
     let mut block_size: usize;
     let mut result = buffer.clone();
     let mut user_sequence_block: Vec<u8> = Vec::with_capacity(defaults::AES_BLOCK_SIZE);
+    // let cipher: Ecb<Aes256, NoPadding> = match Ecb::new_var(&AES_KEY, Default::default()) {
+    //     Ok(cipher) => cipher,
+    //     Err(error) => return Err(error.into()),
+    // };
 
     for _ in (0..defaults::AES_BLOCK_SIZE).step_by(defaults::USER_SEQUENCE_SIZE) {
         for sequence_indexer in 0..defaults::USER_SEQUENCE_SIZE {
@@ -185,16 +188,12 @@ fn maple_custom_aes_crypt(
 
         for byte_in_block in 0..block_size {
             if byte_in_block % defaults::AES_BLOCK_SIZE == 0 {
-                xor_key = match encrypt {
-                    true => match aes_encrypt(&xor_key) {
-                        Ok(encrypted_block) => encrypted_block,
+                let cipher: Ecb<Aes256, NoPadding> =
+                    match Ecb::new_var(&AES_KEY, Default::default()) {
+                        Ok(cipher) => cipher,
                         Err(error) => return Err(error.into()),
-                    },
-                    false => match aes_decrypt(&xor_key) {
-                        Ok(decrypted_block) => decrypted_block,
-                        Err(error) => return Err(error.into()),
-                    },
-                }
+                    };
+                xor_key = cipher.encrypt_vec(&xor_key);
             }
 
             result[data_crypted + byte_in_block] ^=
@@ -207,26 +206,6 @@ fn maple_custom_aes_crypt(
     Ok(result)
 }
 
-fn aes_encrypt(buffer: &[u8]) -> Result<Vec<u8>, Box<dyn error::Error>> {
-    let cipher: Ecb<Aes256, NoPadding> = match Ecb::new_var(&AES_KEY, Default::default()) {
-        Ok(cipher) => cipher,
-        Err(error) => return Err(error.into()),
-    };
-
-    Ok(cipher.encrypt_vec(buffer))
-}
-
-fn aes_decrypt(buffer: &[u8]) -> Result<Vec<u8>, Box<dyn error::Error>> {
-    let cipher: Ecb<Aes256, NoPadding> = match Ecb::new_var(&AES_KEY, Default::default()) {
-        Ok(cipher) => cipher,
-        Err(error) => return Err(error.into()),
-    };
-    match cipher.decrypt_vec(buffer) {
-        Ok(decrypted_text) => Ok(decrypted_text),
-        Err(error) => Err(error.into()),
-    }
-}
-
 ///
 /// PUBLIC FUNCTIONS
 ///
@@ -235,7 +214,7 @@ pub fn maple_custom_encrypt(
     buffer: &Vec<u8>,
     user_sequence: &mut [u8; defaults::USER_SEQUENCE_SIZE],
 ) -> Result<Vec<u8>, Box<dyn error::Error>> {
-    match maple_custom_aes_crypt(maple_custom_encrypt_internal(buffer), user_sequence, true) {
+    match maple_custom_aes_crypt(maple_custom_encrypt_internal(buffer), user_sequence) {
         Ok(encrypted_block) => {
             *user_sequence = morph_sequence(user_sequence);
             Ok(encrypted_block)
@@ -249,7 +228,7 @@ pub fn maple_custom_decrypt(
     user_sequence: &mut [u8; defaults::USER_SEQUENCE_SIZE],
 ) -> Result<Vec<u8>, Box<dyn error::Error>> {
     Ok(maple_custom_decrypt_internals(
-        match maple_custom_aes_crypt(buffer, user_sequence, false) {
+        match maple_custom_aes_crypt(buffer, user_sequence) {
             Ok(aes_decrypted_block) => {
                 *user_sequence = morph_sequence(user_sequence);
                 aes_decrypted_block
