@@ -69,7 +69,7 @@ impl Client {
                         } else {
                             data_to_read = crypto::get_packet_length(&data_buffer);
                             total_data_read = 0;
-                            data_buffer = vec![0; data_to_read];
+                            data_buffer = vec![0u8; data_to_read];
                             info!("about to read {} bytes", data_to_read);
                         }
                     }
@@ -124,7 +124,7 @@ impl Client {
         }
     }
 
-    pub fn create_handshake(
+    fn create_handshake(
         receive_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
         send_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
     ) -> (Vec<u8>, usize) {
@@ -143,20 +143,23 @@ impl Client {
         (result.to_vec(), result.len())
     }
 
-    pub fn handle_receive(
+    fn handle_receive(
         buffer: Vec<u8>,
         buffer_size: usize,
         sender_channel: Sender<SendableMessage>,
         packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
     ) {
-        // let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
-        // match sender_channel.send(send_buffer) {
-        //     Err(error) => debug!("mpsc channel hung up [{}]", error),
-        //     Ok(()) => (),
-        // };
+        let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
+        match sender_channel.send(SendableMessage {
+            buffer: send_buffer,
+            encrypted: true,
+        }) {
+            Err(error) => debug!("mpsc channel hung up [{}]", error),
+            Ok(()) => (),
+        };
     }
 
-    pub fn send_messages(
+    fn send_messages(
         receive_channel: Receiver<SendableMessage>,
         mut stream: TcpStream,
         send_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
