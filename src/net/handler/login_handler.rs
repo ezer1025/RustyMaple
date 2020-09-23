@@ -24,11 +24,5 @@ impl LoginHandler {
         let password_length = buffer.get_u16_le();
         let mut password = vec![0u8; password_length as usize];
         buffer.copy_to_slice(&mut password);
-
-        println!(
-            "user {}:{} tried to login",
-            String::from_utf8(username).unwrap(),
-            String::from_utf8(password).unwrap()
-        );
     }
 }
