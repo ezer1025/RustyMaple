@@ -88,7 +88,7 @@ impl Client {
                         total_data_read += bytes_read;
                         if total_data_read == data_to_read {
                             let decrypted_buffer = match crypto::maple_custom_decrypt(
-                                &data_buffer,
+                                data_buffer,
                                 &mut receive_sequence,
                             ) {
                                 Ok(decrypted_buffer) => decrypted_buffer,
