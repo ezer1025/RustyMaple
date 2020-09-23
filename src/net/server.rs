@@ -86,13 +86,11 @@ impl<'a> ServerBuilder<'a> {
     pub fn spawn(&self) -> Result<Server, Box<dyn error::Error>> {
         let matched_packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static> =
             match self.server_packet_handler {
-                Some("login") => Arc::new(handler::LoginHandler {}),
-                Some("channel") => Arc::new(handler::ChannelHandler {}),
-                Some("world") => Arc::new(handler::WorldHandler {}),
-                Some(other_type) => {
-                    return Err(format!("unknown server type `{}`", other_type).into())
-                }
-                None => return Err("cannot spawn Server without specifying server type".into()),
+                Some(name) => match handler::get_handler_by_name(name) {
+                    None => return Err(format!("unknown server type `{}`", name).into()),
+                    Some(handler) => handler,
+                },
+                None => return Err("cannot spawn Server without specifiying server type".into()),
             };
         Ok(Server {
             packet_handler: matched_packet_handler,
