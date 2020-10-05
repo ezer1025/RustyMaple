@@ -16,8 +16,4 @@ bytes = "0.5.6"
 aes = "0.5.0"
 block-modes = "0.6.1"
 rand = "0.7.3"
-
-[dependencies.mongodb]
-version = "1.1.0"
-default-features = false
-features = ["sync"]
+diesel = { version = "1.4.5", features=["postgres"] }
