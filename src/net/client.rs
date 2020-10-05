@@ -243,7 +243,7 @@ impl<'a> ClientBuilder<'a> {
         self.packet_handler = Some(handler);
         self
     }
-
+    
     pub fn spawn(&self) -> Result<Client, Box<dyn error::Error>> {
         let client_packet_handler = match self.packet_handler {
             Some(specifiyed_handler) => Arc::clone(specifiyed_handler),
