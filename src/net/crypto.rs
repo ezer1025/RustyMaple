@@ -1,11 +1,14 @@
 use crate::defaults;
-
+/*
 use aes::Aes256;
 use block_modes::block_padding::NoPadding;
 use block_modes::{BlockMode, Ecb};
+*/
+use crypto::{aes, blockmodes, buffer};
+use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
 use bytes::{BufMut, BytesMut};
+use std::error::Error;
 use std::cmp::min;
-use std::error;
 
 const SEQUENCE_SHIFTING_KEY: [u8; 256] = [
     0xEC, 0x3F, 0x77, 0xA4, 0x45, 0xD0, 0x71, 0xBF, 0xB7, 0x98, 0x20, 0xFC, 0x4B, 0xE9, 0xB3, 0xE1,
@@ -159,7 +162,7 @@ fn morph_sequence(
 fn maple_custom_aes_crypt(
     buffer: Vec<u8>,
     user_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
-) -> Result<Vec<u8>, Box<dyn error::Error>> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut data_crypted = 0;
     let mut block_size: usize;
     let mut result = buffer.clone();
@@ -172,7 +175,10 @@ fn maple_custom_aes_crypt(
     }
 
     while data_crypted < result.len() {
-        let mut xor_key: Vec<u8> = user_sequence_block.clone();
+        let mut xor_key: Vec<u8> = Vec::<u8>::new();
+        let mut input_buffer = buffer::RefReadBuffer::new(&user_sequence_block[..]);
+        let mut buffer = [0; 4096];
+        let mut output_buffer = buffer::RefWriteBuffer::new(&mut buffer);
 
         block_size = min(
             result.len() - data_crypted,
@@ -184,12 +190,35 @@ fn maple_custom_aes_crypt(
 
         for byte_in_block in 0..block_size {
             if byte_in_block % defaults::AES_BLOCK_SIZE == 0 {
+                let mut cipher = aes::ecb_encryptor(
+                    aes::KeySize::KeySize256,
+                    &AES_KEY,
+                    blockmodes::NoPadding
+                );
+
+                /*
                 let cipher: Ecb<Aes256, NoPadding> =
                     match Ecb::new_var(&AES_KEY, Default::default()) {
                         Ok(cipher) => cipher,
                         Err(error) => return Err(error.into()),
                     };
+                
                 xor_key = cipher.encrypt_vec(&xor_key);
+                */
+
+                loop {
+                    let result = match cipher.encrypt(&mut input_buffer, &mut output_buffer, true) {
+                        Ok(result) => result,
+                        Err(_) => return Err("symmetriccipher::SymmetricCipherError".into())
+                    };
+
+                    xor_key.extend(output_buffer.take_read_buffer().take_remaining().iter().map(|&i| i));
+
+                    match result {
+                        BufferResult::BufferUnderflow => break,
+                        BufferResult::BufferOverflow => { }
+                    }
+                }
             }
 
             result[data_crypted + byte_in_block] ^=
@@ -209,7 +238,7 @@ fn maple_custom_aes_crypt(
 pub fn maple_custom_encrypt(
     buffer: &Vec<u8>,
     user_sequence: &mut [u8; defaults::USER_SEQUENCE_SIZE],
-) -> Result<Vec<u8>, Box<dyn error::Error>> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     match maple_custom_aes_crypt(maple_custom_encrypt_internal(buffer), user_sequence) {
         Ok(encrypted_block) => {
             *user_sequence = morph_sequence(user_sequence);
@@ -222,7 +251,7 @@ pub fn maple_custom_encrypt(
 pub fn maple_custom_decrypt(
     buffer: Vec<u8>,
     user_sequence: &mut [u8; defaults::USER_SEQUENCE_SIZE],
-) -> Result<Vec<u8>, Box<dyn error::Error>> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(maple_custom_decrypt_internals(
         match maple_custom_aes_crypt(buffer, user_sequence) {
             Ok(aes_decrypted_block) => {

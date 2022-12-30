@@ -1,5 +1,6 @@
 extern crate log;
 extern crate simplelog;
+extern crate diesel;
 
 use dotenv::dotenv;
 
@@ -11,10 +12,11 @@ use simplelog::*;
 
 mod defaults;
 mod net;
+mod db;
 
 fn main() {
     CombinedLogger::init(vec![
-        TermLogger::new(LevelFilter::Trace, Config::default(), TerminalMode::Mixed),
+        TermLogger::new(LevelFilter::Trace, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
         WriteLogger::new(
             LevelFilter::Info,
             Config::default(),
@@ -24,6 +26,8 @@ fn main() {
     .unwrap();
 
     dotenv().ok();
+
+    db::db::init();
 
     let server_address: String = match env::var("address") {
         Ok(value) => value,
