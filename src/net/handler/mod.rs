@@ -1,11 +1,11 @@
 mod channel_handler;
 mod login_handler;
 mod world_handler;
-
+use crate::net::client;
 use std::sync::Arc;
 
 pub trait GenericHandler {
-    fn handle(&self, buffer: Vec<u8>, buffer_size: usize) -> (Vec<u8>, usize);
+    fn handle(&self, client: &mut client::Client, buffer: Vec<u8>, buffer_size: usize) -> (Vec<u8>, usize);
 }
 
 pub fn get_handler_by_name(

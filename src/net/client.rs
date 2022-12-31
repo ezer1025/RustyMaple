@@ -12,9 +12,12 @@ use std::net::TcpStream;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
+use rayon;
+use crate::db::model::user;
 
 pub struct Client {
     workers_count: usize,
+    pub db_user: Option<user::User>,
     packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
 }
 
@@ -27,7 +30,10 @@ impl Client {
     pub fn start(&mut self, mut stream: TcpStream) {
         let mut prng: StdRng = StdRng::from_entropy();
         let (sender, receiver) = channel::<SendableMessage>();
-        let receive_thread_pool = threadpool::ThreadPool::new(self.workers_count);
+        let receive_thread_pool = match rayon::ThreadPoolBuilder::new().num_threads(self.workers_count).build() {
+            Ok(thread_pool) => thread_pool,
+            Err(error) => panic!("Could not user's create thread pool [{}]", error)
+        };
 
         let write_stream = match stream.try_clone() {
             Ok(cloned_stream) => cloned_stream,
@@ -103,13 +109,18 @@ impl Client {
                             let sender_clone = sender.clone();
                             let packet_handler = self.packet_handler.clone();
 
-                            receive_thread_pool.execute(move || {
-                                Self::handle_receive(
-                                    decrypted_buffer,
-                                    total_data_read,
-                                    sender_clone,
-                                    packet_handler,
-                                )
+
+                            receive_thread_pool.scope(|scope| {
+                                scope.spawn(|_| {
+                                    Self::handle_receive(
+                                        self,
+                                        decrypted_buffer,
+                                        total_data_read,
+                                        sender_clone,
+                                        packet_handler,
+                                    )
+                                });
+                                
                             });
                             data_to_read = 0;
                             data_buffer = vec![0; defaults::DEFAULT_HEADER_LENGTH];
@@ -144,12 +155,13 @@ impl Client {
     }
 
     fn handle_receive(
+        client: &mut Client,
         buffer: Vec<u8>,
         buffer_size: usize,
         sender_channel: Sender<SendableMessage>,
         packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
     ) {
-        let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
+        let (send_buffer, _) = packet_handler.handle(client, buffer, buffer_size);
         match sender_channel.send(SendableMessage {
             buffer: send_buffer,
             encrypted: true,
@@ -250,6 +262,7 @@ impl<'a> ClientBuilder<'a> {
             None => return Err("could not spawn Client without specifying packet handler".into()),
         };
         Ok(Client {
+            db_user: Default::default(),
             workers_count: self.workers_count,
             packet_handler: client_packet_handler,
         })
