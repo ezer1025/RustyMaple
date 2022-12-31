@@ -1,7 +1,7 @@
 use diesel::table;
 
 table! {
-    users {
+    users(id, username) {
         id -> Integer,
         username -> Varchar,
         is_female -> Bool,

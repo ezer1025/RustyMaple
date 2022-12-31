@@ -20,7 +20,7 @@ lazy_static! {
 
         let manager = ConnectionManager::<PgConnection>::new(db_url);
         
-        match Pool::new(manager) {
+        match Pool::builder().max_size(2).build(manager) {
             Ok(pool_manager) => pool_manager,
             Err(error) => {
                 error!("Unable to create db pool [{}]", error);

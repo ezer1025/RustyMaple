@@ -1,6 +1,6 @@
+extern crate diesel;
 extern crate log;
 extern crate simplelog;
-extern crate diesel;
 
 use dotenv::dotenv;
 
@@ -10,13 +10,18 @@ use std::fs::File;
 use log::*;
 use simplelog::*;
 
+mod db;
 mod defaults;
 mod net;
-mod db;
 
 fn main() {
     CombinedLogger::init(vec![
-        TermLogger::new(LevelFilter::Trace, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
+        TermLogger::new(
+            LevelFilter::Trace,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
         WriteLogger::new(
             LevelFilter::Info,
             Config::default(),
@@ -133,7 +138,7 @@ fn main() {
         .client_workers(client_workers)
         .spawn();
 
-    let server = match server {
+    let mut server = match server {
         Ok(server) => server,
         Err(error) => {
             error!(
