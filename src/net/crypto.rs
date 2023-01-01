@@ -243,18 +243,18 @@ pub fn get_packet_length(header: &Vec<u8>) -> usize {
 }
 
 pub fn generate_packet_header(
-    length: i16,
+    length: u16,
     user_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
-    version: i16,
+    version: u16,
 ) -> Vec<u8> {
     let mut result = BytesMut::with_capacity(defaults::DEFAULT_HEADER_LENGTH);
 
-    let first_word: i16 =
-        (user_sequence[2] as i16 | ((user_sequence[3] as i32) << 8) as i16) ^ version;
-    let second_word: i16 = first_word ^ length;
+    let first_word: u16 =
+        (user_sequence[2] as u16 | ((user_sequence[3] as u32) << 8) as u16) ^ version;
+    let second_word: u16 = first_word ^ length;
 
-    result.put_i16_le(first_word);
-    result.put_i16_le(second_word);
+    result.put_u16_le(first_word);
+    result.put_u16_le(second_word);
 
     result.to_vec()
 }

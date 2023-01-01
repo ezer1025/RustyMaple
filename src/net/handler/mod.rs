@@ -34,7 +34,7 @@ impl CommonHandler {
         let mut bytes = &buffer.clone()[..];
 
         match bytes.get_u16_le() {
-            0x0018 => Self::handle_pong(client, buffer, buffer_size),
+            0x18 => Self::handle_pong(client, buffer, buffer_size),
             _ => self.handler.handle(client, buffer, buffer_size),
         }
     }

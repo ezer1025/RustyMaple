@@ -17,11 +17,10 @@ use std::time::Duration;
 use super::handler::CommonHandler;
 
 pub struct Client {
-    pub user: Option<user::User>,
+    pub user: Option<Mutex<user::User>>,
     pub ponged: bool,
 }
 pub struct LowLevelClient {
-    pub user: Option<user::User>,
     pub client: Arc<Mutex<Client>>,
     read_stream: Arc<Mutex<Option<TcpStream>>>,
     write_stream: Arc<Mutex<Option<TcpStream>>>,
@@ -171,7 +170,7 @@ impl LowLevelClient {
         send_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
     ) -> (Vec<u8>, usize) {
         let mut data = BytesMut::new();
-        data.put_i16_le(defaults::MAPLESTORY_VERSION);
+        data.put_u16_le(defaults::MAPLESTORY_VERSION);
         data.put_u16_le(defaults::MAPLESTORY_SUBVERSION.len() as u16);
         data.put_slice(defaults::MAPLESTORY_SUBVERSION.as_bytes());
         data.put_slice(receive_sequence);
@@ -192,6 +191,7 @@ impl LowLevelClient {
         sender_channel: Sender<SendableMessage>,
         packet_handler: CommonHandler,
     ) {
+        debug!("Received packet {:?}", buffer);
         match packet_handler.handle(client, buffer, buffer_size) {
             Some((send_buffer, _)) => {
                 match sender_channel.send(SendableMessage {
@@ -204,6 +204,10 @@ impl LowLevelClient {
             }
             None => {}
         }
+    }
+
+    fn disconnect(&self) {
+
     }
 
     fn create_ping(&self, sender: Sender<SendableMessage>) {
@@ -221,16 +225,20 @@ impl LowLevelClient {
                 }
             };
 
-            if client_guard.ponged == false {}
+            // if client_guard.ponged == false {
+            //     break;
+            // }
 
-            match sender.send(SendableMessage {
-                buffer: response.to_vec(),
-                encrypted: true,
-            }) {
-                Ok(_) => client_guard.ponged = false,
-                Err(error) => error!("Unable to send packet through mpsc [{}]", error),
-            };
+            // match sender.send(SendableMessage {
+            //     buffer: response.to_vec(),
+            //     encrypted: true,
+            // }) {
+            //     Ok(_) => client_guard.ponged = false,
+            //     Err(error) => error!("Unable to send packet through mpsc [{}]", error),
+            // };
         });
+
+        self.disconnect();
     }
 
     fn send_messages(
@@ -242,31 +250,6 @@ impl LowLevelClient {
         loop {
             match receive_channel.recv() {
                 Ok(sendable_message) => {
-                    let mut final_buffer;
-                    
-                    if sendable_message.encrypted {
-                        final_buffer = crypto::generate_packet_header(
-                            sendable_message.buffer.len() as i16,
-                            &user_send_sequence,
-                            -defaults::MAPLESTORY_VERSION + 1,
-                        );
-
-                        final_buffer.extend(
-                            match crypto::maple_custom_encrypt(
-                                &sendable_message.buffer,
-                                &mut user_send_sequence,
-                            ) {
-                                Ok(encrypted_buffer) => encrypted_buffer,
-                                Err(error) => {
-                                    warn!("unable to encrypt message [{}]", error);
-                                    break;
-                                }
-                            },
-                        );
-                    } else {
-                        final_buffer = sendable_message.buffer;
-                    }
-
                     let mut stream_guard = match stream_arc.lock() {
                         Ok(stream_guard) => stream_guard,
                         Err(error) => {
@@ -276,14 +259,40 @@ impl LowLevelClient {
                     };
 
                     match *stream_guard {
-                        Some(ref mut stream) => match stream.write(&final_buffer[..]) {
-                            Ok(bytes_written) => debug!(
-                                "written {} bytes to {}",
-                                bytes_written,
-                                stream.peer_addr().unwrap()
-                            ),
-                            Err(error) => warn!("could not write to TcpStream [{}]", error),
-                        },
+                        Some(ref mut stream) => {
+                            let mut final_buffer;
+                            debug!("About to send packet {:?}", &sendable_message.buffer);
+                            
+                            if sendable_message.encrypted {
+                                final_buffer = crypto::generate_packet_header(
+                                    sendable_message.buffer.len() as u16,
+                                    &user_send_sequence,
+                                    (0xFFFF as u16).wrapping_sub(defaults::MAPLESTORY_VERSION),
+                                );
+
+                                final_buffer.extend(match crypto::maple_custom_encrypt(
+                                    &sendable_message.buffer,
+                                    &mut user_send_sequence,
+                                ) {
+                                    Ok(encrypted_buffer) => encrypted_buffer,
+                                    Err(error) => {
+                                        warn!("unable to encrypt message [{}]", error);
+                                        break;
+                                    }
+                                });
+                            } else {
+                                final_buffer = sendable_message.buffer;
+                            }
+
+                            match stream.write(&final_buffer[..]) {
+                                Ok(bytes_written) => debug!(
+                                    "written {} bytes to {}",
+                                    bytes_written,
+                                    stream.peer_addr().unwrap()
+                                ),
+                                Err(error) => warn!("could not write to TcpStream [{}]", error),
+                            }
+                        }
                         None => {}
                     };
                 }
@@ -325,10 +334,9 @@ impl<'a> ClientBuilder<'a> {
             None => return Err("could not spawn Client without specifying packet handler".into()),
         };
         Ok(LowLevelClient {
-            user: Default::default(),
             client: Arc::new(Mutex::new(Client {
-                ponged: false,
-                user: Default::default(),
+                ponged: true,
+                user: None
             })),
             workers_count: self.workers_count,
             packet_handler: client_packet_handler,

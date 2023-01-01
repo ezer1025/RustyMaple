@@ -9,6 +9,7 @@ table! {
         logged_in -> Bool,
         password -> Varchar,
         salt -> Bytea,
+        pin_code -> Nullable<Varchar>,
         creation_date -> Timestamp,
         ban_reason -> SmallInt,
         ban_reset_date -> Timestamp,
