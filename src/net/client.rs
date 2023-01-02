@@ -213,7 +213,7 @@ impl LowLevelClient {
     fn create_ping(&self, sender: Sender<SendableMessage>) {
         let client_arc = self.client.clone();
         let mut response = BytesMut::new();
-        response.put_u16_le(0x11);
+        response.put_u16_le(0x09);
 
         thread::spawn(move || loop {
             thread::sleep(Duration::new(15, 0));
@@ -225,17 +225,17 @@ impl LowLevelClient {
                 }
             };
 
-            // if client_guard.ponged == false {
-            //     break;
-            // }
+            if client_guard.ponged == false {
+                break;
+            }
 
-            // match sender.send(SendableMessage {
-            //     buffer: response.to_vec(),
-            //     encrypted: true,
-            // }) {
-            //     Ok(_) => client_guard.ponged = false,
-            //     Err(error) => error!("Unable to send packet through mpsc [{}]", error),
-            // };
+            match sender.send(SendableMessage {
+                buffer: response.to_vec(),
+                encrypted: true,
+            }) {
+                Ok(_) => client_guard.ponged = false,
+                Err(error) => error!("Unable to send packet through mpsc [{}]", error),
+            };
         });
 
         self.disconnect();
@@ -262,7 +262,7 @@ impl LowLevelClient {
                         Some(ref mut stream) => {
                             let mut final_buffer;
                             debug!("About to send packet {:?}", &sendable_message.buffer);
-                            
+
                             if sendable_message.encrypted {
                                 final_buffer = crypto::generate_packet_header(
                                     sendable_message.buffer.len() as u16,

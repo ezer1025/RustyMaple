@@ -1,5 +1,5 @@
 mod channel_handler;
-mod login_handler;
+mod login;
 mod world_handler;
 use bytes::Buf;
 use std::sync::{Arc, Mutex};
@@ -34,7 +34,7 @@ impl CommonHandler {
         let mut bytes = &buffer.clone()[..];
 
         match bytes.get_u16_le() {
-            0x18 => Self::handle_pong(client, buffer, buffer_size),
+            0x0A => Self::handle_pong(client, buffer, buffer_size),
             _ => self.handler.handle(client, buffer, buffer_size),
         }
     }
@@ -63,7 +63,7 @@ impl Clone for CommonHandler {
 
 pub fn get_handler_by_name(handler_name: &str) -> Option<CommonHandler> {
     match handler_name {
-        "login" => Some(CommonHandler::new(Arc::new(login_handler::LoginHandler {}))),
+        "login" => Some(CommonHandler::new(Arc::new(login::LoginHandler {}))),
         "channel" => Some(CommonHandler::new(Arc::new(
             channel_handler::ChannelHandler {},
         ))),
