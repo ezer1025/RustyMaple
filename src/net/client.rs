@@ -213,7 +213,7 @@ impl LowLevelClient {
     fn create_ping(&self, sender: Sender<SendableMessage>) {
         let client_arc = self.client.clone();
         let mut response = BytesMut::new();
-        response.put_u16_le(0x09);
+        response.put_u16_le(0x11u16);
 
         thread::spawn(move || loop {
             thread::sleep(Duration::new(15, 0));

@@ -166,7 +166,7 @@ pub fn check_pin_code(client: Arc<Mutex<Client>>, buffer: &mut &[u8]) -> Option<
 }
 
 fn create_simple_pin_response(buffer: &mut BytesMut, response_code: PinResponseType) {
-    buffer.put_u16_le(0x0D); // OPCODE
+    buffer.put_u16_le(0x06); // OPCODE
     buffer.put_u8(response_code as u8);
 }
 

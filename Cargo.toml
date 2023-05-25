@@ -18,6 +18,7 @@ r2d2 = "0.8.10"
 nx = "0.3.0"
 diesel = { version = "2.0.2", features = ["postgres", "r2d2", "time"] }
 lazy_static = "1.4.0"
-bcrypt = "0.13.0"
+bcrypt = "0.14.0"
 aes = "0.8.2"
 ecb = "0.1.1"
+rust-ini = "0.19"

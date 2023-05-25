@@ -3,6 +3,7 @@ extern crate log;
 extern crate simplelog;
 
 use dotenv::dotenv;
+use ini::Ini;
 
 use std::env;
 use std::fs::File;
@@ -15,6 +16,15 @@ mod defaults;
 mod net;
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    let settings = match Ini::load_from_file(&args[1]) {
+        Ok(ini) => ini,
+        Err(error) => {
+            error!("{}", error);
+            std::process::exit(1);
+        }
+    };
+
     CombinedLogger::init(vec![
         TermLogger::new(
             LevelFilter::Trace,
