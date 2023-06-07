@@ -41,7 +41,7 @@ pub struct NewUser {
 
 impl User {
     pub fn get_by_username(username: &str) -> Result<Option<User>, Box<dyn Error>> {
-        let mut db_connection = db::connection()?;
+        let mut db_connection = db::DBPool::get()?.connection()?;
 
         match users::table
             .filter(users::username.eq(username))
@@ -54,7 +54,7 @@ impl User {
     }
 
     pub fn create(new_user: NewUser) -> Result<User, Box<dyn Error>> {
-        let mut db_connection = db::connection()?;
+        let mut db_connection = db::DBPool::get()?.connection()?;
 
         match diesel::insert_into(users::dsl::users)
             .values(&new_user)
@@ -70,7 +70,7 @@ impl User {
     }
 
     pub fn update_pin_code(&mut self, new_pin_code: String) -> Result<usize, Box<dyn Error>> {
-        let mut db_connection = db::connection()?;
+        let mut db_connection = db::DBPool::get()?.connection()?;
         match diesel::update(schema::users::dsl::users).filter(id.eq(self.id)).set(pin_code.eq(Some(&new_pin_code))).execute(&mut db_connection) {
             Ok(affected_rows) => {
                 self.pin_code = Some(new_pin_code);

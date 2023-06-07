@@ -33,6 +33,6 @@
             "cwd": "${workspaceFolder}",
             "environment": [],
             "console": "internalConsole"
-        }
+        },
     ]
 }
