@@ -1,22 +1,21 @@
 use crate::defaults;
 use crate::net::client;
 use crate::net::handler;
-
 use std::error;
 use std::net::SocketAddr;
 use std::net::TcpListener;
-use std::sync::Arc;
 use threadpool::ThreadPool;
+use super::handler::CommonHandler;
 
 pub struct Server {
-    packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
+    packet_handler: CommonHandler,
     connection_threads: usize,
     client_workers: usize,
 }
 
 impl Server {
     pub fn listen(
-        &self,
+        &mut self,
         address: SocketAddr,
         on_new_connection: fn(SocketAddr),
     ) -> Result<(), Box<dyn error::Error>> {
@@ -37,7 +36,7 @@ impl Server {
                 }
             };
 
-            let mut client = match client::ClientBuilder::new()
+            let client = match client::ClientBuilder::new()
                 .packet_handler(&self.packet_handler)
                 .workers_count(&self.client_workers)
                 .spawn()
@@ -45,6 +44,7 @@ impl Server {
                 Ok(client) => client,
                 Err(error) => return Err(error.into()),
             };
+            
             thread_pool.execute(move || {
                 client.start(stream);
             });
@@ -84,14 +84,13 @@ impl<'a> ServerBuilder<'a> {
     }
 
     pub fn spawn(&self) -> Result<Server, Box<dyn error::Error>> {
-        let matched_packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static> =
-            match self.server_packet_handler {
-                Some(name) => match handler::get_handler_by_name(name) {
-                    None => return Err(format!("unknown server type `{}`", name).into()),
-                    Some(handler) => handler,
-                },
-                None => return Err("cannot spawn Server without specifiying server type".into()),
-            };
+        let matched_packet_handler: CommonHandler = match self.server_packet_handler {
+            Some(name) => match handler::get_handler_by_name(name) {
+                None => return Err(format!("unknown server type `{}`", name).into()),
+                Some(handler) => handler,
+            },
+            None => return Err("cannot spawn Server without specifiying server type".into()),
+        };
         Ok(Server {
             packet_handler: matched_packet_handler,
             connection_threads: self.client_main_thread_count,
