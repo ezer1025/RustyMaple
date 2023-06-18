@@ -1,21 +1,31 @@
+use crate::db::model::user;
 use crate::defaults;
 use crate::net::crypto;
-use crate::net::handler;
-
 use bytes::{BufMut, BytesMut};
 use log::*;
 use rand::prelude::*;
+use rayon;
 use std::error;
 use std::io::{Read, Write};
 use std::mem::size_of;
 use std::net::TcpStream;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
+
+use super::handler::CommonHandler;
 
 pub struct Client {
+    pub user: Option<Mutex<user::User>>,
+    pub ponged: bool,
+}
+pub struct LowLevelClient {
+    pub client: Arc<Mutex<Client>>,
+    read_stream: Arc<Mutex<Option<TcpStream>>>,
+    write_stream: Arc<Mutex<Option<TcpStream>>>,
     workers_count: usize,
-    packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
+    packet_handler: CommonHandler,
 }
 
 pub struct SendableMessage {
@@ -23,15 +33,40 @@ pub struct SendableMessage {
     encrypted: bool,
 }
 
-impl Client {
-    pub fn start(&mut self, mut stream: TcpStream) {
+impl LowLevelClient {
+    pub fn start(&self, mut stream: TcpStream) {
         let mut prng: StdRng = StdRng::from_entropy();
         let (sender, receiver) = channel::<SendableMessage>();
-        let receive_thread_pool = threadpool::ThreadPool::new(self.workers_count);
+        let receive_thread_pool = match rayon::ThreadPoolBuilder::new()
+            .num_threads(self.workers_count)
+            .build()
+        {
+            Ok(thread_pool) => thread_pool,
+            Err(error) => panic!("Could not user's create thread pool [{}]", error),
+        };
 
         let write_stream = match stream.try_clone() {
             Ok(cloned_stream) => cloned_stream,
             Err(error) => panic!("could not copy TcpStream [{}]", error),
+        };
+
+        let read_stream = match stream.try_clone() {
+            Ok(cloned_stream) => cloned_stream,
+            Err(error) => panic!("could not copy TcpStream [{}]", error),
+        };
+
+        match self.write_stream.lock() {
+            Ok(mut write_stream_guard) => {
+                *write_stream_guard = Some(write_stream);
+            }
+            Err(error) => panic!("Unable to lock TcpStream Mutex [{}]", error),
+        };
+
+        match self.read_stream.lock() {
+            Ok(mut read_stream_guard) => {
+                *read_stream_guard = Some(read_stream);
+            }
+            Err(error) => panic!("Unable to lock TcpStream Mutex [{}]", error),
         };
 
         let mut send_sequence: [u8; defaults::USER_SEQUENCE_SIZE] = Default::default();
@@ -47,7 +82,10 @@ impl Client {
         let (handshake_packet, _handshake_length) =
             Self::create_handshake(&receive_sequence, &send_sequence);
 
-        thread::spawn(move || Self::send_messages(receiver, write_stream, &mut send_sequence));
+        let write_stream_arc = self.write_stream.clone();
+        thread::spawn(move || Self::send_messages(write_stream_arc, receiver, &send_sequence));
+
+        self.create_ping(sender.clone());
 
         match sender.send(SendableMessage {
             buffer: handshake_packet,
@@ -69,7 +107,7 @@ impl Client {
                         } else {
                             data_to_read = crypto::get_packet_length(&data_buffer);
                             total_data_read = 0;
-                            data_buffer = vec![0; data_to_read];
+                            data_buffer = vec![0u8; data_to_read];
                             info!("about to read {} bytes", data_to_read);
                         }
                     }
@@ -88,7 +126,7 @@ impl Client {
                         total_data_read += bytes_read;
                         if total_data_read == data_to_read {
                             let decrypted_buffer = match crypto::maple_custom_decrypt(
-                                &data_buffer,
+                                data_buffer,
                                 &mut receive_sequence,
                             ) {
                                 Ok(decrypted_buffer) => decrypted_buffer,
@@ -103,13 +141,16 @@ impl Client {
                             let sender_clone = sender.clone();
                             let packet_handler = self.packet_handler.clone();
 
-                            receive_thread_pool.execute(move || {
-                                Self::handle_receive(
-                                    decrypted_buffer,
-                                    total_data_read,
-                                    sender_clone,
-                                    packet_handler,
-                                )
+                            receive_thread_pool.scope(|scope| {
+                                scope.spawn(|_| {
+                                    Self::handle_receive(
+                                        self.client.clone(),
+                                        decrypted_buffer,
+                                        total_data_read,
+                                        sender_clone,
+                                        packet_handler,
+                                    )
+                                });
                             });
                             data_to_read = 0;
                             data_buffer = vec![0; defaults::DEFAULT_HEADER_LENGTH];
@@ -124,7 +165,7 @@ impl Client {
         }
     }
 
-    pub fn create_handshake(
+    fn create_handshake(
         receive_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
         send_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
     ) -> (Vec<u8>, usize) {
@@ -143,51 +184,117 @@ impl Client {
         (result.to_vec(), result.len())
     }
 
-    pub fn handle_receive(
+    fn handle_receive(
+        client: Arc<Mutex<Client>>,
         buffer: Vec<u8>,
         buffer_size: usize,
         sender_channel: Sender<SendableMessage>,
-        packet_handler: Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
+        packet_handler: CommonHandler,
     ) {
-        // let (send_buffer, _) = packet_handler.handle(buffer, buffer_size);
-        // match sender_channel.send(send_buffer) {
-        //     Err(error) => debug!("mpsc channel hung up [{}]", error),
-        //     Ok(()) => (),
-        // };
+        debug!("Received packet {:?}", buffer);
+        match packet_handler.handle(client, buffer, buffer_size) {
+            Some((send_buffer, _)) => {
+                match sender_channel.send(SendableMessage {
+                    buffer: send_buffer,
+                    encrypted: true,
+                }) {
+                    Err(error) => debug!("mpsc channel hung up [{}]", error),
+                    Ok(()) => (),
+                };
+            }
+            None => {}
+        }
     }
 
-    pub fn send_messages(
+    fn disconnect(&self) {
+
+    }
+
+    fn create_ping(&self, sender: Sender<SendableMessage>) {
+        let client_arc = self.client.clone();
+        let mut response = BytesMut::new();
+        response.put_u16_le(0x11u16);
+
+        thread::spawn(move || loop {
+            thread::sleep(Duration::new(15, 0));
+            let mut client_guard = match client_arc.lock() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    error!("Unable to lock Client Mutex [{}]", error);
+                    continue;
+                }
+            };
+
+            if client_guard.ponged == false {
+                break;
+            }
+
+            match sender.send(SendableMessage {
+                buffer: response.to_vec(),
+                encrypted: true,
+            }) {
+                Ok(_) => client_guard.ponged = false,
+                Err(error) => error!("Unable to send packet through mpsc [{}]", error),
+            };
+        });
+
+        self.disconnect();
+    }
+
+    fn send_messages(
+        stream_arc: Arc<Mutex<Option<TcpStream>>>,
         receive_channel: Receiver<SendableMessage>,
-        mut stream: TcpStream,
         send_sequence: &[u8; defaults::USER_SEQUENCE_SIZE],
     ) {
         let mut user_send_sequence = send_sequence.clone();
         loop {
             match receive_channel.recv() {
                 Ok(sendable_message) => {
-                    let mut final_buffer = sendable_message.buffer;
-                    if sendable_message.encrypted {
-                        final_buffer = match crypto::maple_custom_encrypt(
-                            &final_buffer,
-                            &mut user_send_sequence,
-                        ) {
-                            Ok(encrypted_buffer) => encrypted_buffer,
-                            Err(error) => {
-                                warn!("unable to encrypt message [{}]", error);
-                                break;
+                    let mut stream_guard = match stream_arc.lock() {
+                        Ok(stream_guard) => stream_guard,
+                        Err(error) => {
+                            debug!("Could not lock TcpStream Arc [{}]", error);
+                            continue;
+                        }
+                    };
+
+                    match *stream_guard {
+                        Some(ref mut stream) => {
+                            let mut final_buffer;
+                            debug!("About to send packet {:?}", &sendable_message.buffer);
+
+                            if sendable_message.encrypted {
+                                final_buffer = crypto::generate_packet_header(
+                                    sendable_message.buffer.len() as u16,
+                                    &user_send_sequence,
+                                    (0xFFFF as u16).wrapping_sub(defaults::MAPLESTORY_VERSION),
+                                );
+
+                                final_buffer.extend(match crypto::maple_custom_encrypt(
+                                    &sendable_message.buffer,
+                                    &mut user_send_sequence,
+                                ) {
+                                    Ok(encrypted_buffer) => encrypted_buffer,
+                                    Err(error) => {
+                                        warn!("unable to encrypt message [{}]", error);
+                                        break;
+                                    }
+                                });
+                            } else {
+                                final_buffer = sendable_message.buffer;
                             }
-                        };
-                    }
 
-                    match stream.write(&final_buffer[..]) {
-                        Ok(bytes_written) => debug!(
-                            "written {} bytes to {}",
-                            bytes_written,
-                            stream.peer_addr().unwrap()
-                        ),
-
-                        Err(error) => warn!("could not write to TcpStream [{}]", error),
-                    }
+                            match stream.write(&final_buffer[..]) {
+                                Ok(bytes_written) => debug!(
+                                    "written {} bytes to {}",
+                                    bytes_written,
+                                    stream.peer_addr().unwrap()
+                                ),
+                                Err(error) => warn!("could not write to TcpStream [{}]", error),
+                            }
+                        }
+                        None => {}
+                    };
                 }
                 Err(error) => {
                     debug!("mpsc channel hung up [{}]", error);
@@ -200,7 +307,7 @@ impl Client {
 
 pub struct ClientBuilder<'a> {
     workers_count: usize,
-    packet_handler: Option<&'a Arc<dyn handler::GenericHandler + Sync + Send + 'static>>,
+    packet_handler: Option<&'a CommonHandler>,
 }
 
 impl<'a> ClientBuilder<'a> {
@@ -216,22 +323,25 @@ impl<'a> ClientBuilder<'a> {
         self
     }
 
-    pub fn packet_handler(
-        &mut self,
-        handler: &'a Arc<dyn handler::GenericHandler + Sync + Send + 'static>,
-    ) -> &mut Self {
+    pub fn packet_handler(&mut self, handler: &'a CommonHandler) -> &mut Self {
         self.packet_handler = Some(handler);
         self
     }
 
-    pub fn spawn(&self) -> Result<Client, Box<dyn error::Error>> {
+    pub fn spawn(&self) -> Result<LowLevelClient, Box<dyn error::Error>> {
         let client_packet_handler = match self.packet_handler {
-            Some(specifiyed_handler) => Arc::clone(specifiyed_handler),
+            Some(specifiyed_handler) => specifiyed_handler.clone(),
             None => return Err("could not spawn Client without specifying packet handler".into()),
         };
-        Ok(Client {
+        Ok(LowLevelClient {
+            client: Arc::new(Mutex::new(Client {
+                ponged: true,
+                user: None
+            })),
             workers_count: self.workers_count,
             packet_handler: client_packet_handler,
+            read_stream: Arc::new(Mutex::new(None)),
+            write_stream: Arc::new(Mutex::new(None)),
         })
     }
 }
