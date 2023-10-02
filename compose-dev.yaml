@@ -3,7 +3,7 @@ services:
     entrypoint:
     - sleep
     - infinity
-    image: docker/rust:latest
+    image: rust:latest
     init: true
     volumes:
     - type: bind
